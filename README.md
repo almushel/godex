@@ -1,0 +1,2 @@
+# godex
+A Pokedex CLI
