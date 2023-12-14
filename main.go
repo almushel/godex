@@ -7,6 +7,9 @@ import (
 	"fmt"
 	"net/http"
 	"os"
+	"time"
+
+	"github.com/almushel/godex/internal/pokecache"
 )
 
 type command struct {
@@ -25,6 +28,7 @@ type LocationAreaList struct {
 var appState struct {
 	commands                         map[string]command
 	nextLocations, previousLocations string
+	cache                            *pokecache.Cache
 }
 
 func initCommands() {
@@ -71,24 +75,28 @@ func getLocationAreas(params string) (locations LocationAreaList, err error) {
 	const endPointURL = "https://pokeapi.co/api/v2/location-area/"
 	getURL := endPointURL + params
 
-	response, err := http.Get(getURL)
-	if err != nil {
-		println(err.Error())
-		os.Exit(1)
-	}
-	defer response.Body.Close()
-	defer fmt.Println("")
-
-	var buffer []byte
-	rb := make([]byte, 1024)
-
-	numRead, err := response.Body.Read(rb)
-	for numRead > 0 {
-		buffer = append(buffer, rb[:numRead]...)
-		if err != nil && err.Error() != "EOF" {
-			return locations, err
+	buffer, ok := appState.cache.Get(getURL)
+	if !ok {
+		response, err := http.Get(getURL)
+		if err != nil {
+			println(err.Error())
+			os.Exit(1)
 		}
-		numRead, err = response.Body.Read(rb)
+		defer response.Body.Close()
+		defer fmt.Println("")
+
+		rb := make([]byte, 1024)
+
+		numRead, err := response.Body.Read(rb)
+		for numRead > 0 {
+			buffer = append(buffer, rb[:numRead]...)
+			if err != nil && err.Error() != "EOF" {
+				return locations, err
+			}
+			numRead, err = response.Body.Read(rb)
+		}
+
+		appState.cache.Add(getURL, buffer)
 	}
 
 	locationsPage := new(LocationAreaList)
@@ -109,7 +117,7 @@ func commandMap() error {
 	} else {
 		appState.previousLocations = endPointURL
 	}
-	// NOTE: Current wraps around to first page when all location areas have been listed
+	// NOTE: Currently wraps to first page when all location areas have been listed
 	appState.nextLocations = locations.Next[min(len(endPointURL), len(locations.Next)):]
 
 	for _, location := range locations.Results {
@@ -139,9 +147,13 @@ func commandMapB() error {
 	return err
 }
 
-func main() {
-	appState.nextLocations = "?limit=20&offset=700"
+func init() {
+	appState.cache = pokecache.NewCache(5 * time.Minute)
 	initCommands()
+	//appState.nextLocations = "?limit=20&offset=700"
+}
+
+func main() {
 	scanner := bufio.NewScanner(os.Stdin)
 	for {
 		fmt.Print("Pokedex > ")
