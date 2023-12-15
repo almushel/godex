@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"net/http"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/almushel/godex/internal/pokecache"
@@ -14,15 +15,51 @@ import (
 
 type command struct {
 	name, description string
-	callback          func() error
+	callback          func(...string) error
+}
+
+type pokeEndpoint struct {
+	Name string `json:"name"`
+	URL  string `json:"url"`
 }
 
 type LocationAreaList struct {
 	Count          int
 	Next, Previous string
-	Results        []struct {
-		Name, URL string
-	}
+	Results        []pokeEndpoint
+}
+
+type LocationArea struct {
+	// First three values don't seem to be in the response?
+	//	ID                   int    `json:"id"`
+	//	Name                 string `json:"name"`
+	//	GameIndex            int    `json:"game_index"`
+	EncounterMethodRates []struct {
+		EncounterMethod pokeEndpoint `json:"encounter_method"`
+		VersionDetails  []struct {
+			Rate    int          `json:"rate"`
+			Version pokeEndpoint `json:"version"`
+		} `json:"version_details"`
+	} `json:"encounter_method_rates"`
+	Location pokeEndpoint `json:"location"`
+	Names    []struct {
+		Name     string       `json:"name"`
+		Language pokeEndpoint `json:"language"`
+	} `json:"names"`
+	PokemonEncounters []struct {
+		Pokemon        pokeEndpoint `json:"pokemon"`
+		VersionDetails []struct {
+			Version          pokeEndpoint `json:"version"`
+			MaxChance        int          `json:"max_chance"`
+			EncounterDetails []struct {
+				MinLevel        int          `json:"min_level"`
+				MaxLevel        int          `json:"max_level"`
+				ConditionValues []any        `json:"condition_values"`
+				Chance          int          `json:"chance"`
+				Method          pokeEndpoint `json:"method"`
+			} `json:"encounter_details"`
+		} `json:"version_details"`
+	} `json:"pokemon_encounters"`
 }
 
 var appState struct {
@@ -43,6 +80,11 @@ func initCommands() {
 			description: "Exits the program",
 			callback:    commandExit,
 		},
+		"explore": {
+			name:        "explore",
+			description: "Lists the pokemon encounters in a given location area",
+			callback:    commandExplore,
+		},
 		"map": {
 			name:        "map",
 			description: "Displays the next 20 locations in the Pokemon world",
@@ -56,13 +98,13 @@ func initCommands() {
 	}
 }
 
-func commandExit() error {
+func commandExit(args ...string) error {
 	fmt.Println("Exiting...")
 	os.Exit(0)
 	return nil
 }
 
-func commandHelp() error {
+func commandHelp(args ...string) error {
 	fmt.Print("Usage:\n\n")
 	defer fmt.Println("")
 	for _, cmd := range appState.commands {
@@ -71,19 +113,17 @@ func commandHelp() error {
 	return nil
 }
 
-func getLocationAreas(params string) (locations LocationAreaList, err error) {
-	const endPointURL = "https://pokeapi.co/api/v2/location-area/"
+func getEndpoint[T any](endPointURL, params string) (*T, error) {
+	result := new(T)
 	getURL := endPointURL + params
 
 	buffer, ok := appState.cache.Get(getURL)
 	if !ok {
 		response, err := http.Get(getURL)
 		if err != nil {
-			println(err.Error())
-			os.Exit(1)
+			return result, err
 		}
 		defer response.Body.Close()
-		defer fmt.Println("")
 
 		rb := make([]byte, 1024)
 
@@ -91,27 +131,27 @@ func getLocationAreas(params string) (locations LocationAreaList, err error) {
 		for numRead > 0 {
 			buffer = append(buffer, rb[:numRead]...)
 			if err != nil && err.Error() != "EOF" {
-				return locations, err
+				return result, err
 			}
 			numRead, err = response.Body.Read(rb)
 		}
 
 		appState.cache.Add(getURL, buffer)
 	}
-
-	locationsPage := new(LocationAreaList)
-	err = json.Unmarshal(buffer, locationsPage)
+	err := json.Unmarshal(buffer, result)
 	if err != nil {
-		return locations, err
+		return result, err
 	}
-	locations = *locationsPage
-	return
+
+	return result, nil
 }
 
-func commandMap() error {
+func commandMap(args ...string) error {
 	const endPointURL = "https://pokeapi.co/api/v2/location-area/"
-	locations, err := getLocationAreas(appState.nextLocations)
-
+	locations, err := getEndpoint[LocationAreaList](endPointURL, appState.nextLocations)
+	if err != nil {
+		return err
+	}
 	if appState.nextLocations != "" {
 		appState.previousLocations = appState.nextLocations
 	} else {
@@ -127,7 +167,7 @@ func commandMap() error {
 	return err
 }
 
-func commandMapB() error {
+func commandMapB(args ...string) error {
 	const endPointURL = "https://pokeapi.co/api/v2/location-area/"
 	if appState.previousLocations == "" {
 		return errors.New("No previous location areas to list")
@@ -135,13 +175,35 @@ func commandMapB() error {
 	if appState.previousLocations == endPointURL {
 		appState.previousLocations = ""
 	}
-	locations, err := getLocationAreas(appState.previousLocations)
+	locations, err := getEndpoint[LocationAreaList](endPointURL, appState.previousLocations)
+	if err != nil {
+		return err
+	}
 
 	appState.previousLocations = locations.Previous[min(len(endPointURL), len(locations.Previous)):]
 	appState.nextLocations = appState.previousLocations
 
 	for _, location := range locations.Results {
 		fmt.Println(location.Name)
+	}
+
+	return err
+}
+
+func commandExplore(args ...string) error {
+	const endPointURL = "https://pokeapi.co/api/v2/location-area/"
+	if len(args) == 0 || len(args[0]) == 0 {
+		return errors.New("Area Unspecified. Usage: explore [area id or name]")
+	}
+	area, err := getEndpoint[LocationArea](endPointURL, args[0])
+	if err != nil {
+		return err
+	}
+
+	fmt.Printf("Exploring %s...\n", args[0])
+	fmt.Println("Found Pokemon:")
+	for _, pokeman := range area.PokemonEncounters {
+		fmt.Printf("  - %s\n", pokeman.Pokemon.Name)
 	}
 
 	return err
@@ -158,12 +220,13 @@ func main() {
 	for {
 		fmt.Print("Pokedex > ")
 		scanner.Scan()
-		cmd, ok := appState.commands[scanner.Text()]
+		cmdKey, args, _ := strings.Cut(scanner.Text(), " ")
+		cmd, ok := appState.commands[cmdKey]
 		if !ok {
-			fmt.Println("Invalid command:", scanner.Text())
+			fmt.Println("Invalid command:", cmdKey)
 			continue
 		}
-		err := cmd.callback()
+		err := cmd.callback(strings.Split(args, " ")...)
 		if err != nil {
 			print(err.Error() + "\n")
 		}
