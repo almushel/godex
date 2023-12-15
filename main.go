@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"math/rand"
 	"net/http"
 	"os"
 	"strings"
@@ -18,62 +19,20 @@ type command struct {
 	callback          func(...string) error
 }
 
-type pokeEndpoint struct {
-	Name string `json:"name"`
-	URL  string `json:"url"`
-}
-
-type LocationAreaList struct {
-	Count          int
-	Next, Previous string
-	Results        []pokeEndpoint
-}
-
-type LocationArea struct {
-	// First three values don't seem to be in the response?
-	//	ID                   int    `json:"id"`
-	//	Name                 string `json:"name"`
-	//	GameIndex            int    `json:"game_index"`
-	EncounterMethodRates []struct {
-		EncounterMethod pokeEndpoint `json:"encounter_method"`
-		VersionDetails  []struct {
-			Rate    int          `json:"rate"`
-			Version pokeEndpoint `json:"version"`
-		} `json:"version_details"`
-	} `json:"encounter_method_rates"`
-	Location pokeEndpoint `json:"location"`
-	Names    []struct {
-		Name     string       `json:"name"`
-		Language pokeEndpoint `json:"language"`
-	} `json:"names"`
-	PokemonEncounters []struct {
-		Pokemon        pokeEndpoint `json:"pokemon"`
-		VersionDetails []struct {
-			Version          pokeEndpoint `json:"version"`
-			MaxChance        int          `json:"max_chance"`
-			EncounterDetails []struct {
-				MinLevel        int          `json:"min_level"`
-				MaxLevel        int          `json:"max_level"`
-				ConditionValues []any        `json:"condition_values"`
-				Chance          int          `json:"chance"`
-				Method          pokeEndpoint `json:"method"`
-			} `json:"encounter_details"`
-		} `json:"version_details"`
-	} `json:"pokemon_encounters"`
-}
-
 var appState struct {
 	commands                         map[string]command
 	nextLocations, previousLocations string
 	cache                            *pokecache.Cache
+
+	pokemon map[string]Pokemon
 }
 
 func initCommands() {
 	appState.commands = map[string]command{
-		"help": {
-			name:        "help",
-			description: "Displays a help message",
-			callback:    commandHelp,
+		"catch": {
+			name:        "catch",
+			description: "Attempt to catch named Pokemon",
+			callback:    commandCatch,
 		},
 		"exit": {
 			name:        "exit",
@@ -84,6 +43,11 @@ func initCommands() {
 			name:        "explore",
 			description: "Lists the pokemon encounters in a given location area",
 			callback:    commandExplore,
+		},
+		"help": {
+			name:        "help",
+			description: "Displays a help message",
+			callback:    commandHelp,
 		},
 		"map": {
 			name:        "map",
@@ -96,21 +60,6 @@ func initCommands() {
 			callback:    commandMapB,
 		},
 	}
-}
-
-func commandExit(args ...string) error {
-	fmt.Println("Exiting...")
-	os.Exit(0)
-	return nil
-}
-
-func commandHelp(args ...string) error {
-	fmt.Print("Usage:\n\n")
-	defer fmt.Println("")
-	for _, cmd := range appState.commands {
-		fmt.Printf("%s: %s\n", cmd.name, cmd.description)
-	}
-	return nil
 }
 
 func getEndpoint[T any](endPointURL, params string) (*T, error) {
@@ -144,6 +93,21 @@ func getEndpoint[T any](endPointURL, params string) (*T, error) {
 	}
 
 	return result, nil
+}
+
+func commandExit(args ...string) error {
+	fmt.Println("Exiting...")
+	os.Exit(0)
+	return nil
+}
+
+func commandHelp(args ...string) error {
+	fmt.Print("Usage:\n\n")
+	defer fmt.Println("")
+	for _, cmd := range appState.commands {
+		fmt.Printf("%s: %s\n", cmd.name, cmd.description)
+	}
+	return nil
 }
 
 func commandMap(args ...string) error {
@@ -209,8 +173,35 @@ func commandExplore(args ...string) error {
 	return err
 }
 
+func commandCatch(args ...string) error {
+	const endPointURL = "https://pokeapi.co/api/v2/pokemon/"
+	if len(args) == 0 || len(args[0]) == 0 {
+		return errors.New("Pokemon unspecified. Usage: catch [pokemon id or name]")
+	}
+
+	pokemon, err := getEndpoint[Pokemon](endPointURL, args[0])
+	if err != nil {
+		return err
+	}
+	fmt.Printf("Throwing a Pokeball at %s...\n", args[0])
+
+	var catchChance float32 = 100 / float32(pokemon.BaseExperience*pokemon.BaseExperience)
+	catchChance *= 2000
+	var throw float32 = rand.Float32() * 100
+	//fmt.Println("catch chance:", catchChance+1, ", throw:", throw)
+	if throw <= catchChance+1 {
+		fmt.Println(args[0], "was caught!")
+		appState.pokemon[args[0]] = *pokemon
+	} else {
+		fmt.Println(args[0], "escaped!")
+	}
+
+	return nil
+}
+
 func init() {
 	appState.cache = pokecache.NewCache(5 * time.Minute)
+	appState.pokemon = make(map[string]Pokemon)
 	initCommands()
 	//appState.nextLocations = "?limit=20&offset=700"
 }
