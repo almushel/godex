@@ -64,6 +64,11 @@ func initCommands() {
 			description: "Displays the previous 20 locations in the Pokemon world",
 			callback:    commandMapB,
 		},
+		"pokedex": {
+			name:        "pokedex",
+			description: "Lists all of the Pokemon the user has caught",
+			callback:    commandPokedex,
+		},
 	}
 }
 
@@ -227,6 +232,13 @@ func commandMapB(args ...string) error {
 	return err
 }
 
+func commandPokedex(args ...string) error {
+	fmt.Println("Your Pokedex:")
+	for name, _ := range appState.pokemon {
+		fmt.Printf(" - %s\n", name)
+	}
+	return nil
+}
 func init() {
 	appState.cache = pokecache.NewCache(5 * time.Minute)
 	appState.pokemon = make(map[string]Pokemon)
