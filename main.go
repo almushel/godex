@@ -49,6 +49,11 @@ func initCommands() {
 			description: "Displays a help message",
 			callback:    commandHelp,
 		},
+		"inspect": {
+			name:        "inspect",
+			description: "Display information about a previously caught Pokemon",
+			callback:    commandInspect,
+		},
 		"map": {
 			name:        "map",
 			description: "Displays the next 20 locations in the Pokemon world",
@@ -95,10 +100,55 @@ func getEndpoint[T any](endPointURL, params string) (*T, error) {
 	return result, nil
 }
 
+func commandCatch(args ...string) error {
+	const endPointURL = "https://pokeapi.co/api/v2/pokemon/"
+	if len(args) == 0 || len(args[0]) == 0 {
+		return errors.New("Pokemon unspecified. Usage: catch [pokemon id or name]")
+	}
+
+	pokemon, err := getEndpoint[Pokemon](endPointURL, args[0])
+	if err != nil {
+		return err
+	}
+	fmt.Printf("Throwing a Pokeball at %s...\n", args[0])
+
+	var catchChance float32 = 100 / float32(pokemon.BaseExperience*pokemon.BaseExperience)
+	catchChance *= 2000
+	var throw float32 = rand.Float32() * 100
+	//fmt.Println("catch chance:", catchChance+1, ", throw:", throw)
+	if throw <= catchChance+1 {
+		fmt.Println(args[0], "was caught!")
+		appState.pokemon[args[0]] = *pokemon
+	} else {
+		fmt.Println(args[0], "escaped!")
+	}
+
+	return nil
+}
+
 func commandExit(args ...string) error {
 	fmt.Println("Exiting...")
 	os.Exit(0)
 	return nil
+}
+
+func commandExplore(args ...string) error {
+	const endPointURL = "https://pokeapi.co/api/v2/location-area/"
+	if len(args) == 0 || len(args[0]) == 0 {
+		return errors.New("Area Unspecified. Usage: explore [area id or name]")
+	}
+	area, err := getEndpoint[LocationArea](endPointURL, args[0])
+	if err != nil {
+		return err
+	}
+
+	fmt.Printf("Exploring %s...\n", args[0])
+	fmt.Println("Found Pokemon:")
+	for _, pokeman := range area.PokemonEncounters {
+		fmt.Printf("  - %s\n", pokeman.Pokemon.Name)
+	}
+
+	return err
 }
 
 func commandHelp(args ...string) error {
@@ -107,6 +157,30 @@ func commandHelp(args ...string) error {
 	for _, cmd := range appState.commands {
 		fmt.Printf("%s: %s\n", cmd.name, cmd.description)
 	}
+	return nil
+}
+
+func commandInspect(args ...string) error {
+	if len(args) == 0 || len(args[0]) == 0 {
+		return errors.New("No pokemon specified. Usage: inspect [pokemon name or id]")
+	}
+	p, ok := appState.pokemon[args[0]]
+	if !ok {
+		fmt.Println("You have not caught that Pokemon")
+		return nil
+	}
+	fmt.Println(args[0])
+	fmt.Println("Height:", p.Height)
+	fmt.Println("Weight:", p.Weight)
+	fmt.Println("Stats:")
+	for _, stat := range p.Stats {
+		fmt.Printf("   - %s: %d\n", stat.Stat.Name, stat.BaseStat)
+	}
+	fmt.Println("Types:")
+	for _, pType := range p.Types {
+		fmt.Printf("   - %s\n", pType.Type.Name)
+	}
+
 	return nil
 }
 
@@ -119,7 +193,6 @@ func commandMap(args ...string) error {
 	if appState.nextLocations != "" {
 		appState.previousLocations = appState.nextLocations
 	} else {
-		appState.previousLocations = endPointURL
 	}
 	// NOTE: Currently wraps to first page when all location areas have been listed
 	appState.nextLocations = locations.Next[min(len(endPointURL), len(locations.Next)):]
@@ -152,51 +225,6 @@ func commandMapB(args ...string) error {
 	}
 
 	return err
-}
-
-func commandExplore(args ...string) error {
-	const endPointURL = "https://pokeapi.co/api/v2/location-area/"
-	if len(args) == 0 || len(args[0]) == 0 {
-		return errors.New("Area Unspecified. Usage: explore [area id or name]")
-	}
-	area, err := getEndpoint[LocationArea](endPointURL, args[0])
-	if err != nil {
-		return err
-	}
-
-	fmt.Printf("Exploring %s...\n", args[0])
-	fmt.Println("Found Pokemon:")
-	for _, pokeman := range area.PokemonEncounters {
-		fmt.Printf("  - %s\n", pokeman.Pokemon.Name)
-	}
-
-	return err
-}
-
-func commandCatch(args ...string) error {
-	const endPointURL = "https://pokeapi.co/api/v2/pokemon/"
-	if len(args) == 0 || len(args[0]) == 0 {
-		return errors.New("Pokemon unspecified. Usage: catch [pokemon id or name]")
-	}
-
-	pokemon, err := getEndpoint[Pokemon](endPointURL, args[0])
-	if err != nil {
-		return err
-	}
-	fmt.Printf("Throwing a Pokeball at %s...\n", args[0])
-
-	var catchChance float32 = 100 / float32(pokemon.BaseExperience*pokemon.BaseExperience)
-	catchChance *= 2000
-	var throw float32 = rand.Float32() * 100
-	//fmt.Println("catch chance:", catchChance+1, ", throw:", throw)
-	if throw <= catchChance+1 {
-		fmt.Println(args[0], "was caught!")
-		appState.pokemon[args[0]] = *pokemon
-	} else {
-		fmt.Println(args[0], "escaped!")
-	}
-
-	return nil
 }
 
 func init() {
